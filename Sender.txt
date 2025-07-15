@@ -1,0 +1,84 @@
+#include <SPI.h>
+#include <RF24.h>
+
+// nRF24L01 setup
+RF24 radio(9, 10); // CE, CSN pins
+const uint64_t pipe = 0xE8E8F0F0E1LL; // Communication pipe
+
+// RC4 state array
+unsigned char S[256];
+char encrypted[512]; // Buffer for encrypted data
+
+// RC4 key
+char key[] = "SecretKey123"; // Change this key as needed
+
+// RC4 initialization (KSA)
+void rc4_init(unsigned char *s, unsigned char *key, unsigned long key_len) {
+  int i, j = 0;
+  unsigned char tmp;
+  for (i = 0; i < 256; i++) {
+    s[i] = i;
+  }
+  for (i = 0; i < 256; i++) {
+    j = (j + s[i] + key[i % key_len]) % 256;
+    tmp = s[i];
+    s[i] = s[j];
+    s[j] = tmp;
+  }
+}
+
+// RC4 encryption
+void rc4_crypt(unsigned char *s, unsigned char *data, unsigned long len) {
+  int i = 0, j = 0, t;
+  unsigned long k;
+  unsigned char tmp;
+  for (k = 0; k < len; k++) {
+    i = (i + 1) % 256;
+    j = (j + s[i]) % 256;
+    tmp = s[i];
+    s[i] = s[j];
+    s[j] = tmp;
+    t = (s[i] + s[j]) % 256;
+    data[k] ^= s[t];
+  }
+}
+
+void setup() {
+  Serial.begin(9600);
+  radio.begin();
+  radio.setDataRate(RF24_250KBPS); // Lower data rate for reliability
+  radio.setRetries(5, 5); // Delay and max retries
+  radio.openWritingPipe(pipe); // Set pipe for sending
+  radio.stopListening(); // Set as transmitter
+}
+
+void loop() {
+  // Sentence to encrypt (changeable)
+  char plaintext[] = "Hasan Ismail"; // Change this sentence as needed
+  unsigned long len = strlen(plaintext);
+
+  // Copy plaintext to encrypted buffer
+  memcpy(encrypted, plaintext, len);
+  
+  // Initialize RC4
+  rc4_init(S, (unsigned char*)key, strlen(key));
+  
+  // Encrypt the data
+  rc4_crypt(S, (unsigned char*)encrypted, len);
+  
+  // Send encrypted data
+  bool success = radio.write(encrypted, len);
+  
+  if (success) {
+    Serial.print("Sent encrypted: ");
+    for (unsigned long i = 0; i < len; i++) {
+      Serial.print(encrypted[i], HEX);
+      Serial.print(" ");
+    }
+    Serial.println();
+  } else {
+    Serial.println("Transmission failed");
+  }
+  
+  delay(1000); // Send every 1 second
+}

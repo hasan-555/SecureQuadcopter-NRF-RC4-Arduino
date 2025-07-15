@@ -1,0 +1,77 @@
+#include <SPI.h>
+#include <RF24.h>
+
+// nRF24L01 setup
+RF24 radio(9, 10); // CE, CSN pins
+const uint64_t pipe = 0xE8E8F0F0E1LL; // Same pipe as sender
+
+// RC4 state array
+unsigned char S[256];
+char received[512]; // Buffer for received data
+
+// RC4 key (must match sender's key)
+char key[] = "SecretKey123"; // Change this key to match sender
+
+// RC4 initialization (KSA)
+void rc4_init(unsigned char *s, unsigned char *key, unsigned long key_len) {
+  int i, j = 0;
+  unsigned char tmp;
+  for (i = 0; i < 256; i++) {
+    s[i] = i;
+  }
+  for (i = 0; i < 256; i++) {
+    j = (j + s[i] + key[i % key_len]) % 256;
+    tmp = s[i];
+    s[i] = s[j];
+    s[j] = tmp;
+  }
+}
+
+// RC4 decryption (same as encryption due to XOR)
+void rc4_crypt(unsigned char *s, unsigned char *data, unsigned long len) {
+  int i = 0, j = 0, t;
+  unsigned long k;
+  unsigned char tmp;
+  for (k = 0; k < len; k++) {
+    i = (i + 1) % 256;
+    j = (j + s[i]) % 256;
+    tmp = s[i];
+    s[i] = s[j];
+    s[j] = tmp;
+    t = (s[i] + s[j]) % 256;
+    data[k] ^= s[t];
+  }
+}
+
+void setup() {
+  Serial.begin(9600);
+  radio.begin();
+  radio.setDataRate(RF24_250KBPS); // Match sender's data rate
+  radio.setRetries(5, 5); // Delay and max retries
+  radio.openReadingPipe(1, pipe); // Set pipe for receiving
+  radio.startListening(); // Set as receiver
+}
+
+void loop() {
+  if (radio.available()) {
+    unsigned long len = radio.getDynamicPayloadSize();
+    if (len <= 512) { // Ensure buffer doesn't overflow
+      radio.read(received, len);
+      
+      // Initialize RC4
+      rc4_init(S, (unsigned char*)key, strlen(key));
+      
+      // Decrypt the data
+      rc4_crypt(S, (unsigned char*)received, len);
+      
+      // Null-terminate the string
+      received[len] = '\0';
+      
+      // Print decrypted data
+      Serial.print("Received and decrypted: ");
+      Serial.println(received);
+    } else {
+      Serial.println("Received data too large");
+    }
+  }
+}
